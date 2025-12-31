@@ -1,9 +1,9 @@
+import path from 'path';
 import type { Plugin } from '@opencode-ai/plugin';
 import { tool } from '@opencode-ai/plugin';
-import path from 'path';
 
 import { applyOverridesToRuntimeConfig, loadOverrides } from './sync/config.ts';
-import { SyncConfigMissingError, SyncCommandError } from './sync/errors.ts';
+import { SyncCommandError, SyncConfigMissingError } from './sync/errors.ts';
 import { resolveSyncLocations } from './sync/paths.ts';
 import { createSyncService } from './sync/service.ts';
 
@@ -141,7 +141,10 @@ export const OpencodeConfigSync: Plugin = async (ctx) => {
     },
   });
 
-  void service.startupSync();
+  // Delay startup sync slightly to ensure TUI is connected
+  setTimeout(() => {
+    void service.startupSync();
+  }, 1000);
 
   return {
     tool: {

@@ -2,7 +2,6 @@ import type { PluginInput } from '@opencode-ai/plugin';
 
 type Client = PluginInput['client'];
 
-// Unwraps a response object, returning the data or null if an error occurred.
 export function unwrapData<T>(response: unknown): T | null {
   if (!response || typeof response !== 'object') return null;
   const maybeError = (response as { error?: unknown }).error;
@@ -15,7 +14,6 @@ export function unwrapData<T>(response: unknown): T | null {
   return response as T;
 }
 
-// Extracts text content from an AI response object.
 export function extractTextFromResponse(response: unknown): string | null {
   if (!response || typeof response !== 'object') return null;
 
@@ -28,7 +26,6 @@ export function extractTextFromResponse(response: unknown): string | null {
   return textPart?.text?.trim() ?? null;
 }
 
-// Falls back to the main model if small_model is not configured.
 export async function resolveSmallModel(
   client: Client
 ): Promise<{ providerID: string; modelID: string } | null> {

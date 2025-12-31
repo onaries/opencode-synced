@@ -1,5 +1,6 @@
 import type { PluginInput } from '@opencode-ai/plugin';
-
+import { syncLocalToRepo, syncRepoToLocal } from './apply.ts';
+import { generateCommitMessage } from './commit.ts';
 import {
   loadOverrides,
   loadState,
@@ -8,10 +9,7 @@ import {
   writeState,
   writeSyncConfig,
 } from './config.ts';
-import { SyncConfigMissingError, SyncCommandError } from './errors.ts';
-import { generateCommitMessage } from './commit.ts';
-import { extractTextFromResponse, resolveSmallModel, unwrapData } from './utils.ts';
-import { syncLocalToRepo, syncRepoToLocal } from './apply.ts';
+import { SyncCommandError, SyncConfigMissingError } from './errors.ts';
 import { buildSyncPlan, resolveRepoRoot, resolveSyncLocations } from './paths.ts';
 import {
   commitAll,
@@ -27,6 +25,7 @@ import {
   resolveRepoBranch,
   resolveRepoIdentifier,
 } from './repo.ts';
+import { extractTextFromResponse, resolveSmallModel, unwrapData } from './utils.ts';
 
 type SyncServiceContext = Pick<PluginInput, 'client' | '$'>;
 type Shell = PluginInput['$'];
@@ -263,7 +262,7 @@ export function createSyncService(ctx: SyncServiceContext): SyncService {
         }
       }
 
-      return 'Unable to automatically resolve. Please manually resolve in: ' + repoRoot;
+      return `Unable to automatically resolve. Please manually resolve in: ${repoRoot}`;
     },
   };
 }
@@ -416,7 +415,7 @@ async function showToast(
   message: string,
   variant: ToastVariant
 ): Promise<void> {
-  await ctx.client.tui.showToast({ body: { message: `opencode-synced: ${message}`, variant } });
+  await ctx.client.tui.showToast({ body: { title: `opencode-synced plugin`, message: `${message}`, variant } });
 }
 
 function formatError(error: unknown): string {
@@ -493,13 +492,10 @@ async function analyzeAndDecideResolution(
       if (sessionId) {
         try {
           await ctx.client.session.delete({ path: { id: sessionId } });
-        } catch {
-          // Ignore cleanup failures
-        }
+        } catch {}
       }
     }
   } catch (error) {
-    // eslint-disable-next-line no-console
     console.error('[ERROR] AI resolution analysis failed:', error);
     return { action: 'manual', reason: `Error analyzing changes: ${formatError(error)}` };
   }

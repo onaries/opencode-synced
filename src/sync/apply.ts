@@ -2,7 +2,7 @@ import { promises as fs } from 'fs';
 import path from 'path';
 
 import { deepMerge, parseJsonc, pathExists, stripOverrides, writeJsonFile } from './config.ts';
-import type { SyncPlan, SyncItem } from './paths.ts';
+import type { SyncItem, SyncPlan } from './paths.ts';
 import { normalizePath } from './paths.ts';
 
 interface ExtraSecretManifestEntry {

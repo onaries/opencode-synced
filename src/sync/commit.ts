@@ -58,9 +58,7 @@ export async function generateCommitMessage(
     if (sessionId) {
       try {
         await ctx.client.session.delete({ path: { id: sessionId } });
-      } catch {
-        // Ignore cleanup failures.
-      }
+      } catch {}
     }
   }
 }

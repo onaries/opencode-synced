@@ -6,9 +6,16 @@
 - **Test**: `mise run test` or `bun test`
 - **Single Test**: `bun test BackgroundTask.test.ts` (use file glob pattern)
 - **Watch Mode**: `bun test --watch`
-- **Lint**: `mise run lint` (eslint)
-- **Fix Lint**: `mise run lint:fix` (eslint --fix)
-- **Format**: `mise run format` (prettier)
+- **Lint**: `mise run lint` or `bun run lint` (biome)
+- **Fix Lint**: `mise run lint:fix` or `bun run lint:fix` (biome --write)
+- **Format**: `mise run format` or `bun run format` (biome format --write)
+- **Check (Lint + Format)**: `bun run check` (biome check --write)
+
+## PR & Commit Guidelines
+
+- **Conventional Commits**: Use conventional commit messages (e.g., `fix:`, `feat:`, `chore:`, `docs:`, `refactor:`, `test:`, `revert:`).
+- **PR Titles**: PR titles MUST follow conventional commit format (e.g., `fix: descriptive title`). This is enforced by GitHub checks.
+- **Workflow**: Run `bun run check` and `bun run test` before creating a PR.
 
 ## Code Style Guidelines
 
@@ -18,11 +25,11 @@
 - Group imports: external libraries first, then internal modules
 - Use explicit file extensions (`.ts`) for internal imports
 
-### Formatting (Prettier)
+### Formatting (Biome)
 
-- **Single quotes** (`singleQuote: true`)
+- **Single quotes** (`quoteStyle: 'single'`)
 - **Line width**: 100 characters
-- **Tab width**: 2 spaces
+- **Tab width**: 2 spaces (indentStyle: 'space')
 - **Trailing commas**: ES5 (no trailing commas in function parameters)
 - **Semicolons**: enabled
 
