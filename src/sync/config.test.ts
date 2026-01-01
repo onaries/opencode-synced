@@ -1,7 +1,12 @@
+import { mkdtemp, rm } from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
+
 import { describe, expect, it } from 'vitest';
 
 import {
   canCommitMcpSecrets,
+  chmodIfExists,
   deepMerge,
   normalizeSyncConfig,
   parseJsonc,
@@ -96,5 +101,17 @@ describe('parseJsonc', () => {
       includeSecrets: false,
       extraSecretPaths: ['foo'],
     });
+  });
+});
+
+describe('chmodIfExists', () => {
+  it('ignores missing paths', async () => {
+    const tempDir = await mkdtemp(path.join(os.tmpdir(), 'opencode-sync-'));
+    try {
+      const missingPath = path.join(tempDir, 'missing.txt');
+      await expect(chmodIfExists(missingPath, 0o600)).resolves.toBeUndefined();
+    } finally {
+      await rm(tempDir, { recursive: true, force: true });
+    }
   });
 });

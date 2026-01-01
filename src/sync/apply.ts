@@ -2,6 +2,7 @@ import { promises as fs } from 'node:fs';
 import path from 'node:path';
 
 import {
+  chmodIfExists,
   deepMerge,
   hasOwn,
   parseJsonc,
@@ -182,7 +183,7 @@ async function copyFileWithMode(sourcePath: string, destinationPath: string): Pr
   const stat = await fs.stat(sourcePath);
   await fs.mkdir(path.dirname(destinationPath), { recursive: true });
   await fs.copyFile(sourcePath, destinationPath);
-  await fs.chmod(destinationPath, stat.mode & 0o777);
+  await chmodIfExists(destinationPath, stat.mode & 0o777);
 }
 
 async function copyDirRecursive(sourcePath: string, destinationPath: string): Promise<void> {
@@ -204,7 +205,7 @@ async function copyDirRecursive(sourcePath: string, destinationPath: string): Pr
     }
   }
 
-  await fs.chmod(destinationPath, stat.mode & 0o777);
+  await chmodIfExists(destinationPath, stat.mode & 0o777);
 }
 
 async function removePath(targetPath: string): Promise<void> {
@@ -235,7 +236,7 @@ async function applyExtraSecrets(plan: SyncPlan, fromRepo: boolean): Promise<voi
     if (fromRepo) {
       await copyFileWithMode(repoPath, localPath);
       if (entry.mode !== undefined) {
-        await fs.chmod(localPath, entry.mode);
+        await chmodIfExists(localPath, entry.mode);
       }
     }
   }
