@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented here by Release Please.
 
+## [0.7.0](https://github.com/iHildy/opencode-synced/compare/v0.6.0...v0.7.0) (2026-01-01)
+
+
+### Features
+
+* add file locking and improved chmod handling to fix false bug ([e3382dc](https://github.com/iHildy/opencode-synced/commit/e3382dce421685449e423bbad8b64d6133d80c23))
+
 ## [0.6.0](https://github.com/iHildy/opencode-synced/compare/v0.5.1...v0.6.0) (2025-12-31)
 
 
