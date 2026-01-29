@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented here by Release Please.
 
+## [0.9.0](https://github.com/iHildy/opencode-synced/compare/v0.8.0...v0.9.0) (2026-01-29)
+
+
+### Features
+
+* add model favorites sync setting ([ea67233](https://github.com/iHildy/opencode-synced/commit/ea672339a69deda24517c08f0f938efaea1d9080))
+
 ## [0.8.0](https://github.com/iHildy/opencode-synced/compare/v0.7.1...v0.8.0) (2026-01-29)
 
 
