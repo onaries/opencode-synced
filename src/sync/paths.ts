@@ -151,7 +151,7 @@ export function encodeExtraPath(inputPath: string): string {
   const normalized = inputPath.replace(/\\/g, '/');
   const safeBase = normalized.replace(/[^a-zA-Z0-9._-]+/g, '_').replace(/^_+/, '');
   const hash = crypto.createHash('sha1').update(normalized).digest('hex').slice(0, 8);
-  const base = safeBase ? safeBase.slice(-80) : 'secret';
+  const base = safeBase ? safeBase.slice(-80) : 'path';
   return `${base}-${hash}`;
 }
 
