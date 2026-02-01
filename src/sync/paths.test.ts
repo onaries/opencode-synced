@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import type { SyncConfig } from './config.js';
+import { normalizeSyncConfig } from './config.js';
 import { buildSyncPlan, resolveSyncLocations, resolveXdgPaths } from './paths.js';
 
 describe('resolveXdgPaths', () => {
@@ -50,7 +51,7 @@ describe('buildSyncPlan', () => {
       extraConfigPaths: ['/home/test/.config/opencode/custom.json'],
     };
 
-    const plan = buildSyncPlan(config, locations, '/repo', 'linux');
+    const plan = buildSyncPlan(normalizeSyncConfig(config), locations, '/repo', 'linux');
     const secretItems = plan.items.filter((item) => item.isSecret);
 
     expect(secretItems.length).toBe(0);
@@ -68,7 +69,7 @@ describe('buildSyncPlan', () => {
       extraConfigPaths: ['/home/test/.config/opencode/custom.json'],
     };
 
-    const plan = buildSyncPlan(config, locations, '/repo', 'linux');
+    const plan = buildSyncPlan(normalizeSyncConfig(config), locations, '/repo', 'linux');
     const secretItems = plan.items.filter((item) => item.isSecret);
 
     expect(secretItems.length).toBe(2);
@@ -84,7 +85,7 @@ describe('buildSyncPlan', () => {
       includeSecrets: false,
     };
 
-    const plan = buildSyncPlan(config, locations, '/repo', 'linux');
+    const plan = buildSyncPlan(normalizeSyncConfig(config), locations, '/repo', 'linux');
     const favoritesItem = plan.items.find((item) =>
       item.localPath.endsWith('/.local/state/opencode/model.json')
     );
@@ -92,7 +93,7 @@ describe('buildSyncPlan', () => {
     expect(favoritesItem).toBeTruthy();
 
     const disabledPlan = buildSyncPlan(
-      { ...config, includeModelFavorites: false },
+      normalizeSyncConfig({ ...config, includeModelFavorites: false }),
       locations,
       '/repo',
       'linux'

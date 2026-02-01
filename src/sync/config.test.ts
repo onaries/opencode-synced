@@ -77,6 +77,12 @@ describe('normalizeSyncConfig', () => {
     const normalized = normalizeSyncConfig({});
     expect(normalized.includeModelFavorites).toBe(true);
   });
+
+  it('defaults extra path lists when omitted', () => {
+    const normalized = normalizeSyncConfig({ includeSecrets: true });
+    expect(normalized.extraSecretPaths).toEqual([]);
+    expect(normalized.extraConfigPaths).toEqual([]);
+  });
 });
 
 describe('canCommitMcpSecrets', () => {

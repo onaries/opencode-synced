@@ -22,6 +22,16 @@ export interface SyncConfig {
   extraConfigPaths?: string[];
 }
 
+export interface NormalizedSyncConfig extends SyncConfig {
+  includeSecrets: boolean;
+  includeMcpSecrets: boolean;
+  includeSessions: boolean;
+  includePromptStash: boolean;
+  includeModelFavorites: boolean;
+  extraSecretPaths: string[];
+  extraConfigPaths: string[];
+}
+
 export interface SyncState {
   lastPull?: string;
   lastPush?: string;
@@ -47,7 +57,7 @@ export async function chmodIfExists(filePath: string, mode: number): Promise<voi
   }
 }
 
-export function normalizeSyncConfig(config: SyncConfig): SyncConfig {
+export function normalizeSyncConfig(config: SyncConfig): NormalizedSyncConfig {
   const includeSecrets = Boolean(config.includeSecrets);
   const includeModelFavorites = config.includeModelFavorites !== false;
   return {
@@ -67,7 +77,9 @@ export function canCommitMcpSecrets(config: SyncConfig): boolean {
   return Boolean(config.includeSecrets) && Boolean(config.includeMcpSecrets);
 }
 
-export async function loadSyncConfig(locations: SyncLocations): Promise<SyncConfig | null> {
+export async function loadSyncConfig(
+  locations: SyncLocations
+): Promise<NormalizedSyncConfig | null> {
   if (!(await pathExists(locations.syncConfigPath))) {
     return null;
   }
