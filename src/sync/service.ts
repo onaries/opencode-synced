@@ -3,8 +3,10 @@ import path from 'node:path';
 import type { PluginInput } from '@opencode-ai/plugin';
 import { syncLocalToRepo, syncRepoToLocal } from './apply.js';
 import { generateCommitMessage } from './commit.js';
+import type { SyncConfig } from './config.js';
 import {
   canCommitMcpSecrets,
+  isOnePasswordBackend,
   loadOverrides,
   loadState,
   loadSyncConfig,
@@ -31,6 +33,12 @@ import {
   resolveRepoBranch,
   resolveRepoIdentifier,
 } from './repo.js';
+import {
+  createOnePasswordBackend,
+  resolveOnePasswordConfig,
+  resolveRepoAuthPaths,
+  type SecretsBackend,
+} from './secrets-backend.js';
 import {
   createLogger,
   extractTextFromResponse,
@@ -72,6 +80,9 @@ export interface SyncService {
   link: (_options: LinkOptions) => Promise<string>;
   pull: () => Promise<string>;
   push: () => Promise<string>;
+  secretsPull: () => Promise<string>;
+  secretsPush: () => Promise<string>;
+  secretsStatus: () => Promise<string>;
   enableSecrets: (_options?: {
     extraSecretPaths?: string[];
     includeMcpSecrets?: boolean;
@@ -116,6 +127,70 @@ export function createSyncService(ctx: SyncServiceContext): SyncService {
       fn
     );
 
+  const resolveSecretsBackend = (
+    config: SyncConfig,
+    options: { requireConfigured: boolean }
+  ): SecretsBackend | null => {
+    const resolution = resolveOnePasswordConfig(config);
+    if (resolution.state === 'none') {
+      return null;
+    }
+
+    if (resolution.state === 'invalid') {
+      if (options.requireConfigured) {
+        throw new SyncCommandError(resolution.error);
+      }
+      log.warn('Secrets backend misconfigured; skipping', { error: resolution.error });
+      return null;
+    }
+
+    return createOnePasswordBackend({ $: ctx.$, locations, config: resolution.config });
+  };
+
+  const ensureAuthFilesNotTracked = async (repoRoot: string, config: SyncConfig): Promise<void> => {
+    if (!isOnePasswordBackend(config)) return;
+
+    const { authRepoPath, mcpAuthRepoPath } = resolveRepoAuthPaths(repoRoot);
+    const tracked: string[] = [];
+    const authRelPath = toRepoRelativePath(repoRoot, authRepoPath);
+    const mcpRelPath = toRepoRelativePath(repoRoot, mcpAuthRepoPath);
+
+    if (await isRepoPathTracked(ctx.$, repoRoot, authRelPath)) {
+      tracked.push(authRelPath);
+    }
+    if (await isRepoPathTracked(ctx.$, repoRoot, mcpRelPath)) {
+      tracked.push(mcpRelPath);
+    }
+
+    if (tracked.length === 0) return;
+
+    const trackedList = tracked.join(', ');
+    throw new SyncCommandError(
+      `Sync repo already tracks secret auth files (${trackedList}). ` +
+        'Remove them and rewrite history before enabling the 1Password backend.'
+    );
+  };
+
+  const runSecretsPullIfConfigured = async (config: SyncConfig): Promise<void> => {
+    const backend = resolveSecretsBackend(config, { requireConfigured: false });
+    if (!backend) return;
+    try {
+      await backend.pull();
+    } catch (error) {
+      log.warn('Secrets backend pull failed; continuing', { error: formatError(error) });
+    }
+  };
+
+  const runSecretsPushIfConfigured = async (config: SyncConfig): Promise<void> => {
+    const backend = resolveSecretsBackend(config, { requireConfigured: false });
+    if (!backend) return;
+    try {
+      await backend.push();
+    } catch (error) {
+      log.warn('Secrets backend push failed; continuing', { error: formatError(error) });
+    }
+  };
+
   return {
     startupSync: () =>
       skipIfBusy(async () => {
@@ -141,7 +216,10 @@ export function createSyncService(ctx: SyncServiceContext): SyncService {
           return;
         }
         try {
-          await runStartup(ctx, locations, config, log);
+          await runStartup(ctx, locations, config, log, {
+            ensureAuthFilesNotTracked,
+            runSecretsPullIfConfigured,
+          });
         } catch (error) {
           log.error('Startup sync failed', { error: formatError(error) });
           await showToast(ctx.client, formatError(error), 'error');
@@ -177,6 +255,7 @@ export function createSyncService(ctx: SyncServiceContext): SyncService {
       const includeSessions = config.includeSessions ? 'enabled' : 'disabled';
       const includePromptStash = config.includePromptStash ? 'enabled' : 'disabled';
       const includeModelFavorites = config.includeModelFavorites ? 'enabled' : 'disabled';
+      const secretsBackend = config.secretsBackend?.type ?? 'none';
       const lastPull = state.lastPull ?? 'never';
       const lastPush = state.lastPush ?? 'never';
 
@@ -194,6 +273,7 @@ export function createSyncService(ctx: SyncServiceContext): SyncService {
         `Repo: ${repoIdentifier}`,
         `Branch: ${branch}`,
         `Secrets: ${includeSecrets}`,
+        `Secrets backend: ${secretsBackend}`,
         `MCP secrets: ${includeMcpSecrets}`,
         `Sessions: ${includeSessions}`,
         `Prompt stash: ${includePromptStash}`,
@@ -320,6 +400,7 @@ export function createSyncService(ctx: SyncServiceContext): SyncService {
         const repoRoot = resolveRepoRoot(config, locations);
         await ensureRepoCloned(ctx.$, config, repoRoot);
         await ensureSecretsPolicy(ctx, config);
+        await ensureAuthFilesNotTracked(repoRoot, config);
 
         const branch = await resolveBranch(ctx, config, repoRoot);
 
@@ -338,6 +419,7 @@ export function createSyncService(ctx: SyncServiceContext): SyncService {
         const overrides = await loadOverrides(locations);
         const plan = buildSyncPlan(config, locations, repoRoot);
         await syncRepoToLocal(plan, overrides);
+        await runSecretsPullIfConfigured(config);
 
         await writeState(locations, {
           lastPull: new Date().toISOString(),
@@ -353,6 +435,7 @@ export function createSyncService(ctx: SyncServiceContext): SyncService {
         const repoRoot = resolveRepoRoot(config, locations);
         await ensureRepoCloned(ctx.$, config, repoRoot);
         await ensureSecretsPolicy(ctx, config);
+        await ensureAuthFilesNotTracked(repoRoot, config);
         const branch = await resolveBranch(ctx, config, repoRoot);
 
         const preDirty = await hasLocalChanges(ctx.$, repoRoot);
@@ -362,6 +445,7 @@ export function createSyncService(ctx: SyncServiceContext): SyncService {
           );
         }
 
+        await runSecretsPushIfConfigured(config);
         const overrides = await loadOverrides(locations);
         const plan = buildSyncPlan(config, locations, repoRoot);
         await syncLocalToRepo(plan, overrides, {
@@ -383,6 +467,59 @@ export function createSyncService(ctx: SyncServiceContext): SyncService {
         });
 
         return `Pushed changes: ${message}`;
+      }),
+    secretsPull: () =>
+      runExclusive(async () => {
+        const config = await getConfigOrThrow(locations);
+        const resolution = resolveOnePasswordConfig(config);
+        if (resolution.state === 'none') {
+          return 'Secrets backend not configured. Add secretsBackend to opencode-synced.jsonc.';
+        }
+        if (resolution.state === 'invalid') {
+          throw new SyncCommandError(resolution.error);
+        }
+        const backend = createOnePasswordBackend({
+          $: ctx.$,
+          locations,
+          config: resolution.config,
+        });
+        await backend.pull();
+        return 'Pulled secrets from 1Password.';
+      }),
+    secretsPush: () =>
+      runExclusive(async () => {
+        const config = await getConfigOrThrow(locations);
+        const resolution = resolveOnePasswordConfig(config);
+        if (resolution.state === 'none') {
+          return 'Secrets backend not configured. Add secretsBackend to opencode-synced.jsonc.';
+        }
+        if (resolution.state === 'invalid') {
+          throw new SyncCommandError(resolution.error);
+        }
+        const backend = createOnePasswordBackend({
+          $: ctx.$,
+          locations,
+          config: resolution.config,
+        });
+        await backend.push();
+        return 'Pushed secrets to 1Password.';
+      }),
+    secretsStatus: () =>
+      runExclusive(async () => {
+        const config = await getConfigOrThrow(locations);
+        const resolution = resolveOnePasswordConfig(config);
+        if (resolution.state === 'none') {
+          return 'Secrets backend not configured. Add secretsBackend to opencode-synced.jsonc.';
+        }
+        if (resolution.state === 'invalid') {
+          throw new SyncCommandError(resolution.error);
+        }
+        const backend = createOnePasswordBackend({
+          $: ctx.$,
+          locations,
+          config: resolution.config,
+        });
+        return await backend.status();
       }),
     enableSecrets: (options?: { extraSecretPaths?: string[]; includeMcpSecrets?: boolean }) =>
       runExclusive(async () => {
@@ -439,17 +576,40 @@ export function createSyncService(ctx: SyncServiceContext): SyncService {
   };
 }
 
+async function isRepoPathTracked(
+  $: Shell,
+  repoRoot: string,
+  repoRelativePath: string
+): Promise<boolean> {
+  const safePath = repoRelativePath.split(path.sep).join('/');
+  try {
+    await $`git -C ${repoRoot} ls-files --error-unmatch ${safePath}`.quiet();
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function toRepoRelativePath(repoRoot: string, absolutePath: string): string {
+  return path.relative(repoRoot, absolutePath).split(path.sep).join('/');
+}
+
 async function runStartup(
   ctx: SyncServiceContext,
   locations: ReturnType<typeof resolveSyncLocations>,
   config: ReturnType<typeof normalizeSyncConfig>,
-  log: Logger
+  log: Logger,
+  options: {
+    ensureAuthFilesNotTracked: (repoRoot: string, config: SyncConfig) => Promise<void>;
+    runSecretsPullIfConfigured: (config: SyncConfig) => Promise<void>;
+  }
 ): Promise<void> {
   const repoRoot = resolveRepoRoot(config, locations);
   log.debug('Starting sync', { repoRoot });
 
   await ensureRepoCloned(ctx.$, config, repoRoot);
   await ensureSecretsPolicy(ctx, config);
+  await options.ensureAuthFilesNotTracked(repoRoot, config);
   const branch = await resolveBranch(ctx, config, repoRoot);
   log.debug('Resolved branch', { branch });
 
@@ -470,6 +630,7 @@ async function runStartup(
     const overrides = await loadOverrides(locations);
     const plan = buildSyncPlan(config, locations, repoRoot);
     await syncRepoToLocal(plan, overrides);
+    await options.runSecretsPullIfConfigured(config);
     await writeState(locations, {
       lastPull: new Date().toISOString(),
       lastRemoteUpdate: new Date().toISOString(),
