@@ -17,11 +17,6 @@
 - **PR Titles**: PR titles MUST follow conventional commit format (e.g., `fix: descriptive title`). This is enforced by GitHub checks.
 - **Workflow**: Run `bun run check` and `bun run test` before creating a PR.
 
-## Branch Policy
-
-- **main**: used only for upstream PRs to `iHildy/opencode-synced` (maintainer repo).
-- **fork-release**: fork-only release automation for `opencode-synced-1password`; keep release workflows/docs there.
-
 ## Code Style Guidelines
 
 ### Imports & Module System

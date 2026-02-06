@@ -87,10 +87,13 @@ describe('normalizeSyncConfig', () => {
 });
 
 describe('normalizeSecretsBackend', () => {
-  it('returns undefined when backend is missing or unknown', () => {
+  it('returns undefined when backend is missing', () => {
     expect(normalizeSecretsBackend(undefined)).toBeUndefined();
+  });
+
+  it('preserves unknown backend types for validation', () => {
     const unknownBackend = { type: 'unknown' } as unknown as SyncConfig['secretsBackend'];
-    expect(normalizeSecretsBackend(unknownBackend)).toBeUndefined();
+    expect(normalizeSecretsBackend(unknownBackend)).toEqual({ type: 'unknown' });
   });
 
   it('normalizes 1password documents', () => {

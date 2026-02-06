@@ -10,7 +10,8 @@ export interface SyncRepoConfig {
   branch?: string;
 }
 
-export type SecretsBackendType = '1password';
+export type KnownSecretsBackendType = '1password';
+export type SecretsBackendType = KnownSecretsBackendType | (string & {});
 
 export interface SecretsBackendDocuments {
   authJson?: string;
@@ -82,7 +83,13 @@ export function normalizeSecretsBackend(
   input: SyncConfig['secretsBackend']
 ): SecretsBackendConfig | undefined {
   if (!input || typeof input !== 'object') return undefined;
-  if (input.type !== '1password') return undefined;
+
+  const type = typeof input.type === 'string' ? input.type : undefined;
+  if (!type) return undefined;
+
+  if (type !== '1password') {
+    return { type };
+  }
 
   const vault = typeof input.vault === 'string' ? input.vault : undefined;
   const documentsInput = isPlainObject(input.documents) ? input.documents : {};

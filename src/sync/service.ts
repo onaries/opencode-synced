@@ -275,6 +275,7 @@ export function createSyncService(ctx: SyncServiceContext): SyncService {
           return;
         }
         try {
+          assertValidSecretsBackend(config);
           await runStartup(ctx, locations, config, log, {
             ensureAuthFilesNotTracked,
             runSecretsPullIfConfigured,
@@ -289,6 +290,8 @@ export function createSyncService(ctx: SyncServiceContext): SyncService {
       if (!config) {
         return 'opencode-synced is not configured. Run /sync-init to set it up.';
       }
+
+      assertValidSecretsBackend(config);
 
       const repoRoot = resolveRepoRoot(config, locations);
       const state = await loadState(locations);
@@ -513,26 +516,40 @@ export function createSyncService(ctx: SyncServiceContext): SyncService {
 
         const dirty = await hasLocalChanges(ctx.$, repoRoot);
         if (!dirty) {
-          const secretsResult = await runSecretsPushIfConfigured(config);
-          if (secretsResult === 'pushed') {
-            return 'No local changes to push. Secrets updated.';
+          try {
+            const secretsResult = await runSecretsPushIfConfigured(config);
+            if (secretsResult === 'pushed') {
+              return 'No local changes to push. Secrets updated.';
+            }
+            if (secretsResult === 'skipped') {
+              return 'No local changes to push. Secrets unchanged.';
+            }
+            return 'No local changes to push.';
+          } catch (error) {
+            log.warn('Secrets push failed after sync check', { error: formatError(error) });
+            return `No local changes to push. Secrets push failed: ${formatError(error)}`;
           }
-          if (secretsResult === 'skipped') {
-            return 'No local changes to push. Secrets unchanged.';
-          }
-          return 'No local changes to push.';
         }
 
         const message = await generateCommitMessage({ client: ctx.client, $: ctx.$ }, repoRoot);
         await commitAll(ctx.$, repoRoot, message);
         await pushBranch(ctx.$, repoRoot, branch);
 
-        await runSecretsPushIfConfigured(config);
+        let secretsFailure: string | null = null;
+        try {
+          await runSecretsPushIfConfigured(config);
+        } catch (error) {
+          secretsFailure = formatError(error);
+          log.warn('Secrets push failed after repo push', { error: secretsFailure });
+        }
 
         await updateState(locations, {
           lastPush: new Date().toISOString(),
         });
 
+        if (secretsFailure) {
+          return `Pushed changes: ${message}. Secrets push failed: ${secretsFailure}`;
+        }
         return `Pushed changes: ${message}`;
       }),
     secretsPull: () =>
@@ -612,6 +629,13 @@ export function createSyncService(ctx: SyncServiceContext): SyncService {
         return `Unable to automatically resolve. Please manually resolve in: ${repoRoot}`;
       }),
   };
+}
+
+function assertValidSecretsBackend(config: NormalizedSyncConfig): void {
+  const resolution = resolveSecretsBackendConfig(config);
+  if (resolution.state === 'invalid') {
+    throw new SyncCommandError(resolution.error);
+  }
 }
 
 async function isRepoPathTracked(
@@ -707,6 +731,7 @@ async function getConfigOrThrow(
       'Missing opencode-synced config. Run /sync-init to set it up.'
     );
   }
+  assertValidSecretsBackend(config);
   return config;
 }
 

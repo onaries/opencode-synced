@@ -14,6 +14,21 @@ describe('resolveSecretsBackendConfig', () => {
     expect(resolution.state).toBe('none');
   });
 
+  it('rejects unsupported backend types', () => {
+    const resolution = resolveSecretsBackendConfig(
+      normalizeSyncConfig({
+        secretsBackend: {
+          type: 'vaultpass',
+        },
+      })
+    );
+
+    expect(resolution.state).toBe('invalid');
+    if (resolution.state === 'invalid') {
+      expect(resolution.error).toContain('Unsupported');
+    }
+  });
+
   it('validates required vault', () => {
     const resolution = resolveSecretsBackendConfig(
       normalizeSyncConfig({

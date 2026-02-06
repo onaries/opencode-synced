@@ -257,7 +257,30 @@ async function pullDocument(
 
   const { tempDir, tempPath } = await createTempPath(targetPath);
   try {
-    await opDocumentGet($, vault, documentName, tempPath);
+    try {
+      await opDocumentGet($, vault, documentName, tempPath);
+    } catch (error) {
+      const retryLookup = await lookupDocumentWithRetry($, vault, documentName);
+      if (!retryLookup) {
+        if (error instanceof SyncCommandError) {
+          throw error;
+        }
+        throw new SyncCommandError(`1Password download failed: ${formatShellError(error)}`);
+      }
+      if (retryLookup.state === 'missing') {
+        return;
+      }
+      if (retryLookup.state === 'duplicate') {
+        throw new SyncCommandError(
+          `Multiple documents named "${documentName}" found in vault "${vault}". ` +
+            'Rename them to be unique.'
+        );
+      }
+      if (error instanceof SyncCommandError) {
+        throw error;
+      }
+      throw new SyncCommandError(`1Password download failed: ${formatShellError(error)}`);
+    }
     await replaceFile(tempPath, targetPath);
   } finally {
     await fs.rm(tempDir, { recursive: true, force: true });
@@ -295,6 +318,30 @@ async function pushDocument(
   try {
     await opDocumentEdit($, vault, documentName, sourcePath);
   } catch (error) {
+    const retryLookup = await lookupDocumentWithRetry($, vault, documentName);
+    if (!retryLookup) {
+      if (error instanceof SyncCommandError) {
+        throw error;
+      }
+      throw new SyncCommandError(`1Password update failed: ${formatShellError(error)}`);
+    }
+    if (retryLookup.state === 'missing') {
+      try {
+        await opDocumentCreate($, vault, documentName, sourcePath);
+      } catch (createError) {
+        throw new SyncCommandError(`1Password create failed: ${formatShellError(createError)}`);
+      }
+      return;
+    }
+    if (retryLookup.state === 'duplicate') {
+      throw new SyncCommandError(
+        `Multiple documents named "${documentName}" found in vault "${vault}". ` +
+          'Rename them to be unique.'
+      );
+    }
+    if (error instanceof SyncCommandError) {
+      throw error;
+    }
     throw new SyncCommandError(`1Password update failed: ${formatShellError(error)}`);
   }
 }
@@ -328,6 +375,19 @@ async function opDocumentEdit(
   sourcePath: string
 ): Promise<void> {
   await $`op document edit ${name} --vault ${vault} ${sourcePath}`.quiet();
+}
+
+async function lookupDocumentWithRetry(
+  $: Shell,
+  vault: string,
+  documentName: string
+): Promise<{ state: 'missing' | 'duplicate' | 'ok'; count: number } | null> {
+  try {
+    const retryIndex = await listVaultDocuments($, vault);
+    return lookupDocument(retryIndex, documentName);
+  } catch {
+    return null;
+  }
 }
 
 async function createTempPath(targetPath: string): Promise<{ tempDir: string; tempPath: string }> {
