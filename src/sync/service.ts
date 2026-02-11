@@ -1,7 +1,8 @@
+import { type FSWatcher, watch } from 'node:fs';
 import path from 'node:path';
 
 import type { PluginInput } from '@opencode-ai/plugin';
-import { syncLocalToRepo, syncRepoToLocal } from './apply.js';
+import { syncAuthToRepo, syncLocalToRepo, syncRepoToLocal } from './apply.js';
 import { generateCommitMessage } from './commit.js';
 import {
   canCommitMcpSecrets,
@@ -77,12 +78,17 @@ export interface SyncService {
     includeMcpSecrets?: boolean;
   }) => Promise<string>;
   resolve: () => Promise<string>;
+  stopAuthWatcher: () => void;
 }
 
 export function createSyncService(ctx: SyncServiceContext): SyncService {
   const locations = resolveSyncLocations();
   const log = createLogger(ctx.client);
   const lockPath = path.join(path.dirname(locations.statePath), 'sync.lock');
+
+  let authWatchers: FSWatcher[] = [];
+  let suppressAuthWatch = false;
+  let authPushDebounce: ReturnType<typeof setTimeout> | null = null;
 
   const formatLockInfo = (info: SyncLockInfo | null): string => {
     if (!info) return 'Another sync is already in progress.';
@@ -116,7 +122,69 @@ export function createSyncService(ctx: SyncServiceContext): SyncService {
       fn
     );
 
+  const pushAuthNow = async (config: ReturnType<typeof normalizeSyncConfig>): Promise<void> => {
+    const repoRoot = resolveRepoRoot(config, locations);
+    const cloned = await isRepoCloned(repoRoot);
+    if (!cloned) return;
+
+    const plan = buildSyncPlan(config, locations, repoRoot);
+    await syncAuthToRepo(plan);
+
+    const dirty = await hasLocalChanges(ctx.$, repoRoot);
+    if (!dirty) return;
+
+    const branch = resolveRepoBranch(config);
+    await commitAll(ctx.$, repoRoot, 'Sync auth token update');
+    await pushBranch(ctx.$, repoRoot, branch);
+    log.info('Pushed auth token update');
+  };
+
+  const startAuthWatcher = (config: ReturnType<typeof normalizeSyncConfig>): void => {
+    stopAuthWatch();
+    if (!config.includeSecrets) return;
+
+    const plan = buildSyncPlan(config, locations, resolveRepoRoot(config, locations));
+    const authItems = plan.items.filter((item) => item.isAuthToken);
+
+    for (const item of authItems) {
+      try {
+        const watcher = watch(item.localPath, () => {
+          if (suppressAuthWatch) return;
+
+          if (authPushDebounce) clearTimeout(authPushDebounce);
+          authPushDebounce = setTimeout(() => {
+            authPushDebounce = null;
+            void withSyncLock(
+              lockPath,
+              {
+                onBusy: () => {
+                  log.debug('Auth push skipped, sync already running');
+                },
+              },
+              () => pushAuthNow(config)
+            ).catch((error) => {
+              log.error('Auth push failed', { error: formatError(error) });
+            });
+          }, 2000);
+        });
+        authWatchers.push(watcher);
+      } catch {}
+    }
+  };
+
+  const stopAuthWatch = (): void => {
+    for (const watcher of authWatchers) {
+      watcher.close();
+    }
+    authWatchers = [];
+    if (authPushDebounce) {
+      clearTimeout(authPushDebounce);
+      authPushDebounce = null;
+    }
+  };
+
   return {
+    stopAuthWatcher: stopAuthWatch,
     startupSync: () =>
       skipIfBusy(async () => {
         let config: ReturnType<typeof normalizeSyncConfig> | null = null;
@@ -140,12 +208,18 @@ export function createSyncService(ctx: SyncServiceContext): SyncService {
           );
           return;
         }
+        const authWatch = {
+          suppress: (value: boolean) => {
+            suppressAuthWatch = value;
+          },
+        };
         try {
-          await runStartup(ctx, locations, config, log);
+          await runStartup(ctx, locations, config, log, authWatch);
         } catch (error) {
           log.error('Startup sync failed', { error: formatError(error) });
           await showToast(ctx.client, formatError(error), 'error');
         }
+        startAuthWatcher(config);
       }),
     status: async () => {
       const config = await loadSyncConfig(locations);
@@ -291,7 +365,12 @@ export function createSyncService(ctx: SyncServiceContext): SyncService {
 
         const overrides = await loadOverrides(locations);
         const plan = buildSyncPlan(config, locations, repoRoot);
-        await syncRepoToLocal(plan, overrides);
+        suppressAuthWatch = true;
+        try {
+          await syncRepoToLocal(plan, overrides);
+        } finally {
+          suppressAuthWatch = false;
+        }
 
         await writeState(locations, {
           lastPull: new Date().toISOString(),
@@ -337,7 +416,12 @@ export function createSyncService(ctx: SyncServiceContext): SyncService {
 
         const overrides = await loadOverrides(locations);
         const plan = buildSyncPlan(config, locations, repoRoot);
-        await syncRepoToLocal(plan, overrides);
+        suppressAuthWatch = true;
+        try {
+          await syncRepoToLocal(plan, overrides);
+        } finally {
+          suppressAuthWatch = false;
+        }
 
         await writeState(locations, {
           lastPull: new Date().toISOString(),
@@ -367,6 +451,7 @@ export function createSyncService(ctx: SyncServiceContext): SyncService {
         await syncLocalToRepo(plan, overrides, {
           overridesPath: locations.overridesPath,
           allowMcpSecrets: canCommitMcpSecrets(config),
+          skipAuthTokens: true,
         });
 
         const dirty = await hasLocalChanges(ctx.$, repoRoot);
@@ -443,7 +528,8 @@ async function runStartup(
   ctx: SyncServiceContext,
   locations: ReturnType<typeof resolveSyncLocations>,
   config: ReturnType<typeof normalizeSyncConfig>,
-  log: Logger
+  log: Logger,
+  authWatch: { suppress: (_value: boolean) => void }
 ): Promise<void> {
   const repoRoot = resolveRepoRoot(config, locations);
   log.debug('Starting sync', { repoRoot });
@@ -469,7 +555,12 @@ async function runStartup(
     log.info('Pulled remote changes', { branch });
     const overrides = await loadOverrides(locations);
     const plan = buildSyncPlan(config, locations, repoRoot);
-    await syncRepoToLocal(plan, overrides);
+    authWatch.suppress(true);
+    try {
+      await syncRepoToLocal(plan, overrides);
+    } finally {
+      authWatch.suppress(false);
+    }
     await writeState(locations, {
       lastPull: new Date().toISOString(),
       lastRemoteUpdate: new Date().toISOString(),
@@ -483,6 +574,7 @@ async function runStartup(
   await syncLocalToRepo(plan, overrides, {
     overridesPath: locations.overridesPath,
     allowMcpSecrets: canCommitMcpSecrets(config),
+    skipAuthTokens: true,
   });
   const changes = await hasLocalChanges(ctx.$, repoRoot);
   if (!changes) {

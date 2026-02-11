@@ -27,6 +27,7 @@ export interface SyncItem {
   type: SyncItemType;
   isSecret: boolean;
   isConfigFile: boolean;
+  isAuthToken: boolean;
 }
 
 export interface ExtraPathPlan {
@@ -193,6 +194,7 @@ export function buildSyncPlan(
       type: 'file',
       isSecret,
       isConfigFile,
+      isAuthToken: false,
     });
   };
 
@@ -207,6 +209,7 @@ export function buildSyncPlan(
       type: 'dir',
       isSecret: false,
       isConfigFile: false,
+      isAuthToken: false,
     });
   }
 
@@ -217,6 +220,7 @@ export function buildSyncPlan(
       type: 'file',
       isSecret: false,
       isConfigFile: false,
+      isAuthToken: false,
     });
   }
 
@@ -228,6 +232,7 @@ export function buildSyncPlan(
         type: 'file',
         isSecret: true,
         isConfigFile: false,
+        isAuthToken: true,
       },
       {
         localPath: path.join(dataRoot, 'mcp-auth.json'),
@@ -235,6 +240,7 @@ export function buildSyncPlan(
         type: 'file',
         isSecret: true,
         isConfigFile: false,
+        isAuthToken: true,
       }
     );
 
@@ -246,6 +252,7 @@ export function buildSyncPlan(
           type: 'dir',
           isSecret: true,
           isConfigFile: false,
+          isAuthToken: false,
         });
       }
     }
@@ -258,6 +265,7 @@ export function buildSyncPlan(
           type: 'file',
           isSecret: true,
           isConfigFile: false,
+          isAuthToken: false,
         });
       }
     }

@@ -58,8 +58,9 @@ export async function syncRepoToLocal(
 export async function syncLocalToRepo(
   plan: SyncPlan,
   overrides: Record<string, unknown> | null,
-  options: { overridesPath?: string; allowMcpSecrets?: boolean } = {}
+  options: { overridesPath?: string; allowMcpSecrets?: boolean; skipAuthTokens?: boolean } = {}
 ): Promise<void> {
+  const skipAuth = Boolean(options.skipAuthTokens);
   const configItems = plan.items.filter((item) => item.isConfigFile);
   const sanitizedConfigs = new Map<string, Record<string, unknown>>();
   let secretOverrides: Record<string, unknown> = {};
@@ -92,6 +93,8 @@ export async function syncLocalToRepo(
   }
 
   for (const item of plan.items) {
+    if (skipAuth && item.isAuthToken) continue;
+
     if (item.isConfigFile) {
       const sanitized = sanitizedConfigs.get(item.localPath);
       await copyConfigForRepo(item, overridesForStrip, plan.repoRoot, sanitized);
@@ -103,6 +106,13 @@ export async function syncLocalToRepo(
 
   await writeExtraPathManifest(plan, plan.extraConfigs);
   await writeExtraPathManifest(plan, plan.extraSecrets);
+}
+
+export async function syncAuthToRepo(plan: SyncPlan): Promise<void> {
+  const authItems = plan.items.filter((item) => item.isAuthToken);
+  for (const item of authItems) {
+    await copyItem(item.localPath, item.repoPath, item.type, true);
+  }
 }
 
 async function copyItem(
