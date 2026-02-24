@@ -4,13 +4,15 @@ import path from 'node:path';
 import type { PluginInput } from '@opencode-ai/plugin';
 import { syncAuthToRepo, syncLocalToRepo, syncRepoToLocal } from './apply.js';
 import { generateCommitMessage } from './commit.js';
+import type { NormalizedSyncConfig } from './config.js';
 import {
   canCommitMcpSecrets,
+  hasSecretsBackend,
   loadOverrides,
   loadState,
   loadSyncConfig,
   normalizeSyncConfig,
-  writeState,
+  updateState,
   writeSyncConfig,
 } from './config.js';
 import { SyncCommandError, SyncConfigMissingError } from './errors.js';
@@ -32,6 +34,13 @@ import {
   resolveRepoBranch,
   resolveRepoIdentifier,
 } from './repo.js';
+import {
+  computeSecretsHash,
+  createSecretsBackend,
+  resolveRepoAuthPaths,
+  resolveSecretsBackendConfig,
+  type SecretsBackend,
+} from './secrets-backend.js';
 import {
   createLogger,
   extractTextFromResponse,
@@ -73,6 +82,9 @@ export interface SyncService {
   link: (_options: LinkOptions) => Promise<string>;
   pull: () => Promise<string>;
   push: () => Promise<string>;
+  secretsPull: () => Promise<string>;
+  secretsPush: () => Promise<string>;
+  secretsStatus: () => Promise<string>;
   enableSecrets: (_options?: {
     extraSecretPaths?: string[];
     includeMcpSecrets?: boolean;
@@ -122,65 +134,126 @@ export function createSyncService(ctx: SyncServiceContext): SyncService {
       fn
     );
 
-  const pushAuthNow = async (config: ReturnType<typeof normalizeSyncConfig>): Promise<void> => {
-    const repoRoot = resolveRepoRoot(config, locations);
-    const cloned = await isRepoCloned(repoRoot);
-    if (!cloned) return;
+  const resolveSecretsBackend = (config: NormalizedSyncConfig): SecretsBackend | null => {
+    const resolution = resolveSecretsBackendConfig(config);
+    if (resolution.state === 'none') {
+      return null;
+    }
 
-    const plan = buildSyncPlan(config, locations, repoRoot);
-    await syncAuthToRepo(plan);
+    if (resolution.state === 'invalid') {
+      throw new SyncCommandError(resolution.error);
+    }
 
-    const dirty = await hasLocalChanges(ctx.$, repoRoot);
-    if (!dirty) return;
-
-    const branch = resolveRepoBranch(config);
-    await commitAll(ctx.$, repoRoot, 'Sync auth token update');
-    await pushBranch(ctx.$, repoRoot, branch);
-    log.info('Pushed auth token update');
+    return createSecretsBackend({ $: ctx.$, locations, config: resolution.config });
   };
 
-  const startAuthWatcher = (config: ReturnType<typeof normalizeSyncConfig>): void => {
-    stopAuthWatch();
-    if (!config.includeSecrets) return;
+  const ensureAuthFilesNotTracked = async (
+    repoRoot: string,
+    config: NormalizedSyncConfig
+  ): Promise<void> => {
+    if (!hasSecretsBackend(config)) return;
 
-    const plan = buildSyncPlan(config, locations, resolveRepoRoot(config, locations));
-    const authItems = plan.items.filter((item) => item.isAuthToken);
+    const { authRepoPath, mcpAuthRepoPath } = resolveRepoAuthPaths(repoRoot);
+    const tracked: string[] = [];
+    const authRelPath = toRepoRelativePath(repoRoot, authRepoPath);
+    const mcpRelPath = toRepoRelativePath(repoRoot, mcpAuthRepoPath);
 
-    for (const item of authItems) {
-      try {
-        const watcher = watch(item.localPath, () => {
-          if (suppressAuthWatch) return;
+    if (await isRepoPathTracked(ctx.$, repoRoot, authRelPath)) {
+      tracked.push(authRelPath);
+    }
+    if (await isRepoPathTracked(ctx.$, repoRoot, mcpRelPath)) {
+      tracked.push(mcpRelPath);
+    }
 
-          if (authPushDebounce) clearTimeout(authPushDebounce);
-          authPushDebounce = setTimeout(() => {
-            authPushDebounce = null;
-            void withSyncLock(
-              lockPath,
-              {
-                onBusy: () => {
-                  log.debug('Auth push skipped, sync already running');
-                },
-              },
-              () => pushAuthNow(config)
-            ).catch((error) => {
-              log.error('Auth push failed', { error: formatError(error) });
-            });
-          }, 2000);
-        });
-        authWatchers.push(watcher);
-      } catch {}
+    if (tracked.length === 0) return;
+
+    const trackedList = tracked.join(', ');
+    throw new SyncCommandError(
+      `Sync repo already tracks secret auth files (${trackedList}). ` +
+        'Remove them and rewrite history before enabling a secrets backend.'
+    );
+  };
+
+  const computeSecretsHashSafe = async (): Promise<string | null> => {
+    try {
+      return await computeSecretsHash(locations);
+    } catch (error) {
+      log.warn('Failed to compute secrets hash', { error: formatError(error) });
+      return null;
     }
   };
 
-  const stopAuthWatch = (): void => {
-    for (const watcher of authWatchers) {
-      watcher.close();
+  const updateSecretsHashState = async (): Promise<void> => {
+    const hash = await computeSecretsHashSafe();
+    if (!hash) return;
+    await updateState(locations, { lastSecretsHash: hash });
+  };
+
+  const pushSecretsWithBackend = async (backend: SecretsBackend): Promise<'skipped' | 'pushed'> => {
+    const hash = await computeSecretsHashSafe();
+    if (hash) {
+      const state = await loadState(locations);
+      if (state.lastSecretsHash === hash) {
+        log.debug('Secrets unchanged; skipping secrets push');
+        return 'skipped';
+      }
     }
-    authWatchers = [];
-    if (authPushDebounce) {
-      clearTimeout(authPushDebounce);
-      authPushDebounce = null;
+
+    await backend.push();
+    if (hash) {
+      await updateState(locations, { lastSecretsHash: hash });
     }
+    return 'pushed';
+  };
+
+  const runSecretsPullIfConfigured = async (config: NormalizedSyncConfig): Promise<void> => {
+    const backend = resolveSecretsBackend(config);
+    if (!backend) return;
+    await backend.pull();
+    await updateSecretsHashState();
+  };
+
+  const runSecretsPushIfConfigured = async (
+    config: NormalizedSyncConfig
+  ): Promise<'not_configured' | 'skipped' | 'pushed'> => {
+    const backend = resolveSecretsBackend(config);
+    if (!backend) return 'not_configured';
+    return await pushSecretsWithBackend(backend);
+  };
+
+  const secretsBackendNotConfiguredMessage =
+    'Secrets backend not configured. Add secretsBackend to opencode-synced.jsonc.';
+
+  const resolveSecretsBackendForCommand = async (): Promise<
+    { backend: SecretsBackend } | { message: string }
+  > => {
+    const config = await getConfigOrThrow(locations);
+    const resolution = resolveSecretsBackendConfig(config);
+    if (resolution.state === 'none') {
+      return {
+        message: secretsBackendNotConfiguredMessage,
+      };
+    }
+    if (resolution.state === 'invalid') {
+      throw new SyncCommandError(resolution.error);
+    }
+    return {
+      backend: createSecretsBackend({
+        $: ctx.$,
+        locations,
+        config: resolution.config,
+      }),
+    };
+  };
+
+  const runSecretsCommand = async (
+    action: (backend: SecretsBackend) => Promise<string>
+  ): Promise<string> => {
+    const resolved = await resolveSecretsBackendForCommand();
+    if ('message' in resolved) {
+      return resolved.message;
+    }
+    return await action(resolved.backend);
   };
 
   return {
@@ -214,7 +287,11 @@ export function createSyncService(ctx: SyncServiceContext): SyncService {
           },
         };
         try {
-          await runStartup(ctx, locations, config, log, authWatch);
+          assertValidSecretsBackend(config);
+          await runStartup(ctx, locations, config, log, {
+            ensureAuthFilesNotTracked,
+            runSecretsPullIfConfigured,
+          });
         } catch (error) {
           log.error('Startup sync failed', { error: formatError(error) });
           await showToast(ctx.client, formatError(error), 'error');
@@ -226,6 +303,8 @@ export function createSyncService(ctx: SyncServiceContext): SyncService {
       if (!config) {
         return 'opencode-synced is not configured. Run /sync-init to set it up.';
       }
+
+      assertValidSecretsBackend(config);
 
       const repoRoot = resolveRepoRoot(config, locations);
       const state = await loadState(locations);
@@ -251,6 +330,7 @@ export function createSyncService(ctx: SyncServiceContext): SyncService {
       const includeSessions = config.includeSessions ? 'enabled' : 'disabled';
       const includePromptStash = config.includePromptStash ? 'enabled' : 'disabled';
       const includeModelFavorites = config.includeModelFavorites ? 'enabled' : 'disabled';
+      const secretsBackend = config.secretsBackend?.type ?? 'none';
       const lastPull = state.lastPull ?? 'never';
       const lastPush = state.lastPush ?? 'never';
 
@@ -268,6 +348,7 @@ export function createSyncService(ctx: SyncServiceContext): SyncService {
         `Repo: ${repoIdentifier}`,
         `Branch: ${branch}`,
         `Secrets: ${includeSecrets}`,
+        `Secrets backend: ${secretsBackend}`,
         `MCP secrets: ${includeMcpSecrets}`,
         `Sessions: ${includeSessions}`,
         `Prompt stash: ${includePromptStash}`,
@@ -311,7 +392,7 @@ export function createSyncService(ctx: SyncServiceContext): SyncService {
             const branch = resolveRepoBranch(config);
             await commitAll(ctx.$, repoRoot, 'Initial sync from opencode-synced');
             await pushBranch(ctx.$, repoRoot, branch);
-            await writeState(locations, { lastPush: new Date().toISOString() });
+            await updateState(locations, { lastPush: new Date().toISOString() });
           }
         }
 
@@ -372,7 +453,7 @@ export function createSyncService(ctx: SyncServiceContext): SyncService {
           suppressAuthWatch = false;
         }
 
-        await writeState(locations, {
+        await updateState(locations, {
           lastPull: new Date().toISOString(),
           lastRemoteUpdate: new Date().toISOString(),
         });
@@ -399,6 +480,7 @@ export function createSyncService(ctx: SyncServiceContext): SyncService {
         const repoRoot = resolveRepoRoot(config, locations);
         await ensureRepoCloned(ctx.$, config, repoRoot);
         await ensureSecretsPolicy(ctx, config);
+        await ensureAuthFilesNotTracked(repoRoot, config);
 
         const branch = await resolveBranch(ctx, config, repoRoot);
 
@@ -416,14 +498,10 @@ export function createSyncService(ctx: SyncServiceContext): SyncService {
 
         const overrides = await loadOverrides(locations);
         const plan = buildSyncPlan(config, locations, repoRoot);
-        suppressAuthWatch = true;
-        try {
-          await syncRepoToLocal(plan, overrides);
-        } finally {
-          suppressAuthWatch = false;
-        }
+        await syncRepoToLocal(plan, overrides);
+        await runSecretsPullIfConfigured(config);
 
-        await writeState(locations, {
+        await updateState(locations, {
           lastPull: new Date().toISOString(),
           lastRemoteUpdate: new Date().toISOString(),
         });
@@ -437,6 +515,7 @@ export function createSyncService(ctx: SyncServiceContext): SyncService {
         const repoRoot = resolveRepoRoot(config, locations);
         await ensureRepoCloned(ctx.$, config, repoRoot);
         await ensureSecretsPolicy(ctx, config);
+        await ensureAuthFilesNotTracked(repoRoot, config);
         const branch = await resolveBranch(ctx, config, repoRoot);
 
         const preDirty = await hasLocalChanges(ctx.$, repoRoot);
@@ -456,19 +535,66 @@ export function createSyncService(ctx: SyncServiceContext): SyncService {
 
         const dirty = await hasLocalChanges(ctx.$, repoRoot);
         if (!dirty) {
-          return 'No local changes to push.';
+          try {
+            const secretsResult = await runSecretsPushIfConfigured(config);
+            if (secretsResult === 'pushed') {
+              return 'No local changes to push. Secrets updated.';
+            }
+            if (secretsResult === 'skipped') {
+              return 'No local changes to push. Secrets unchanged.';
+            }
+            return 'No local changes to push.';
+          } catch (error) {
+            log.warn('Secrets push failed after sync check', { error: formatError(error) });
+            return `No local changes to push. Secrets push failed: ${formatError(error)}`;
+          }
         }
 
         const message = await generateCommitMessage({ client: ctx.client, $: ctx.$ }, repoRoot);
         await commitAll(ctx.$, repoRoot, message);
         await pushBranch(ctx.$, repoRoot, branch);
 
-        await writeState(locations, {
+        let secretsFailure: string | null = null;
+        try {
+          await runSecretsPushIfConfigured(config);
+        } catch (error) {
+          secretsFailure = formatError(error);
+          log.warn('Secrets push failed after repo push', { error: secretsFailure });
+        }
+
+        await updateState(locations, {
           lastPush: new Date().toISOString(),
         });
 
+        if (secretsFailure) {
+          return `Pushed changes: ${message}. Secrets push failed: ${secretsFailure}`;
+        }
         return `Pushed changes: ${message}`;
       }),
+    secretsPull: () =>
+      runExclusive(() =>
+        runSecretsCommand(async (backend) => {
+          await backend.pull();
+          await updateSecretsHashState();
+          return 'Pulled secrets from 1Password.';
+        })
+      ),
+    secretsPush: () =>
+      runExclusive(() =>
+        runSecretsCommand(async (backend) => {
+          const result = await pushSecretsWithBackend(backend);
+          if (result === 'skipped') {
+            return 'Secrets unchanged; skipping 1Password push.';
+          }
+          return 'Pushed secrets to 1Password.';
+        })
+      ),
+    secretsStatus: () =>
+      runExclusive(() =>
+        runSecretsCommand(async (backend) => {
+          return await backend.status();
+        })
+      ),
     enableSecrets: (options?: { extraSecretPaths?: string[]; includeMcpSecrets?: boolean }) =>
       runExclusive(async () => {
         const config = await getConfigOrThrow(locations);
@@ -524,18 +650,47 @@ export function createSyncService(ctx: SyncServiceContext): SyncService {
   };
 }
 
+function assertValidSecretsBackend(config: NormalizedSyncConfig): void {
+  const resolution = resolveSecretsBackendConfig(config);
+  if (resolution.state === 'invalid') {
+    throw new SyncCommandError(resolution.error);
+  }
+}
+
+async function isRepoPathTracked(
+  $: Shell,
+  repoRoot: string,
+  repoRelativePath: string
+): Promise<boolean> {
+  const safePath = repoRelativePath.split(path.sep).join('/');
+  try {
+    await $`git -C ${repoRoot} ls-files --error-unmatch ${safePath}`.quiet();
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function toRepoRelativePath(repoRoot: string, absolutePath: string): string {
+  return path.relative(repoRoot, absolutePath).split(path.sep).join('/');
+}
+
 async function runStartup(
   ctx: SyncServiceContext,
   locations: ReturnType<typeof resolveSyncLocations>,
   config: ReturnType<typeof normalizeSyncConfig>,
   log: Logger,
-  authWatch: { suppress: (_value: boolean) => void }
+  options: {
+    ensureAuthFilesNotTracked: (repoRoot: string, config: NormalizedSyncConfig) => Promise<void>;
+    runSecretsPullIfConfigured: (config: NormalizedSyncConfig) => Promise<void>;
+  }
 ): Promise<void> {
   const repoRoot = resolveRepoRoot(config, locations);
   log.debug('Starting sync', { repoRoot });
 
   await ensureRepoCloned(ctx.$, config, repoRoot);
   await ensureSecretsPolicy(ctx, config);
+  await options.ensureAuthFilesNotTracked(repoRoot, config);
   const branch = await resolveBranch(ctx, config, repoRoot);
   log.debug('Resolved branch', { branch });
 
@@ -555,13 +710,9 @@ async function runStartup(
     log.info('Pulled remote changes', { branch });
     const overrides = await loadOverrides(locations);
     const plan = buildSyncPlan(config, locations, repoRoot);
-    authWatch.suppress(true);
-    try {
-      await syncRepoToLocal(plan, overrides);
-    } finally {
-      authWatch.suppress(false);
-    }
-    await writeState(locations, {
+    await syncRepoToLocal(plan, overrides);
+    await options.runSecretsPullIfConfigured(config);
+    await updateState(locations, {
       lastPull: new Date().toISOString(),
       lastRemoteUpdate: new Date().toISOString(),
     });
@@ -586,7 +737,7 @@ async function runStartup(
   log.info('Pushing local changes', { message });
   await commitAll(ctx.$, repoRoot, message);
   await pushBranch(ctx.$, repoRoot, branch);
-  await writeState(locations, {
+  await updateState(locations, {
     lastPush: new Date().toISOString(),
   });
 }
@@ -600,6 +751,7 @@ async function getConfigOrThrow(
       'Missing opencode-synced config. Run /sync-init to set it up.'
     );
   }
+  assertValidSecretsBackend(config);
   return config;
 }
 
