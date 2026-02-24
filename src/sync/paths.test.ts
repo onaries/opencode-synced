@@ -134,6 +134,39 @@ describe('buildSyncPlan', () => {
     expect(mcpItem).toBeUndefined();
   });
 
+  it('marks auth.json and mcp-auth.json as isAuthToken', () => {
+    const env = { HOME: '/home/test' } as NodeJS.ProcessEnv;
+    const locations = resolveSyncLocations(env, 'linux');
+    const config: SyncConfig = {
+      repo: { owner: 'acme', name: 'config' },
+      includeSecrets: true,
+    };
+
+    const plan = buildSyncPlan(normalizeSyncConfig(config), locations, '/repo', 'linux');
+    const authItems = plan.items.filter((item) => item.isAuthToken);
+    const nonAuthItems = plan.items.filter((item) => !item.isAuthToken);
+
+    expect(authItems.length).toBe(2);
+    expect(authItems.every((item) => item.isSecret)).toBe(true);
+    expect(authItems.some((item) => item.localPath.endsWith('/auth.json'))).toBe(true);
+    expect(authItems.some((item) => item.localPath.endsWith('/mcp-auth.json'))).toBe(true);
+    expect(nonAuthItems.every((item) => !item.isAuthToken)).toBe(true);
+  });
+
+  it('has no isAuthToken items when includeSecrets is false', () => {
+    const env = { HOME: '/home/test' } as NodeJS.ProcessEnv;
+    const locations = resolveSyncLocations(env, 'linux');
+    const config: SyncConfig = {
+      repo: { owner: 'acme', name: 'config' },
+      includeSecrets: false,
+    };
+
+    const plan = buildSyncPlan(normalizeSyncConfig(config), locations, '/repo', 'linux');
+    const authItems = plan.items.filter((item) => item.isAuthToken);
+
+    expect(authItems.length).toBe(0);
+  });
+
   it('includes model favorites by default and allows disabling', () => {
     const env = { HOME: '/home/test' } as NodeJS.ProcessEnv;
     const locations = resolveSyncLocations(env, 'linux');

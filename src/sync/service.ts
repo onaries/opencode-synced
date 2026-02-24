@@ -134,6 +134,67 @@ export function createSyncService(ctx: SyncServiceContext): SyncService {
       fn
     );
 
+  const pushAuthNow = async (config: ReturnType<typeof normalizeSyncConfig>): Promise<void> => {
+    const repoRoot = resolveRepoRoot(config, locations);
+    const cloned = await isRepoCloned(repoRoot);
+    if (!cloned) return;
+
+    const plan = buildSyncPlan(config, locations, repoRoot);
+    await syncAuthToRepo(plan);
+
+    const dirty = await hasLocalChanges(ctx.$, repoRoot);
+    if (!dirty) return;
+
+    const branch = resolveRepoBranch(config);
+    await commitAll(ctx.$, repoRoot, 'Sync auth token update');
+    await pushBranch(ctx.$, repoRoot, branch);
+    log.info('Pushed auth token update');
+  };
+
+  const startAuthWatcher = (config: ReturnType<typeof normalizeSyncConfig>): void => {
+    stopAuthWatch();
+    if (!config.includeSecrets) return;
+
+    const plan = buildSyncPlan(config, locations, resolveRepoRoot(config, locations));
+    const authItems = plan.items.filter((item) => item.isAuthToken);
+
+    for (const item of authItems) {
+      try {
+        const watcher = watch(item.localPath, () => {
+          if (suppressAuthWatch) return;
+
+          if (authPushDebounce) clearTimeout(authPushDebounce);
+          authPushDebounce = setTimeout(() => {
+            authPushDebounce = null;
+            void withSyncLock(
+              lockPath,
+              {
+                onBusy: () => {
+                  log.debug('Auth push skipped, sync already running');
+                },
+              },
+              () => pushAuthNow(config)
+            ).catch((error) => {
+              log.error('Auth push failed', { error: formatError(error) });
+            });
+          }, 2000);
+        });
+        authWatchers.push(watcher);
+      } catch {}
+    }
+  };
+
+  const stopAuthWatch = (): void => {
+    for (const watcher of authWatchers) {
+      watcher.close();
+    }
+    authWatchers = [];
+    if (authPushDebounce) {
+      clearTimeout(authPushDebounce);
+      authPushDebounce = null;
+    }
+  };
+
   const resolveSecretsBackend = (config: NormalizedSyncConfig): SecretsBackend | null => {
     const resolution = resolveSecretsBackendConfig(config);
     if (resolution.state === 'none') {
@@ -289,6 +350,7 @@ export function createSyncService(ctx: SyncServiceContext): SyncService {
         try {
           assertValidSecretsBackend(config);
           await runStartup(ctx, locations, config, log, {
+            authWatch,
             ensureAuthFilesNotTracked,
             runSecretsPullIfConfigured,
           });
@@ -498,7 +560,12 @@ export function createSyncService(ctx: SyncServiceContext): SyncService {
 
         const overrides = await loadOverrides(locations);
         const plan = buildSyncPlan(config, locations, repoRoot);
-        await syncRepoToLocal(plan, overrides);
+        suppressAuthWatch = true;
+        try {
+          await syncRepoToLocal(plan, overrides);
+        } finally {
+          suppressAuthWatch = false;
+        }
         await runSecretsPullIfConfigured(config);
 
         await updateState(locations, {
@@ -681,6 +748,7 @@ async function runStartup(
   config: ReturnType<typeof normalizeSyncConfig>,
   log: Logger,
   options: {
+    authWatch: { suppress: (_value: boolean) => void };
     ensureAuthFilesNotTracked: (repoRoot: string, config: NormalizedSyncConfig) => Promise<void>;
     runSecretsPullIfConfigured: (config: NormalizedSyncConfig) => Promise<void>;
   }
@@ -710,7 +778,12 @@ async function runStartup(
     log.info('Pulled remote changes', { branch });
     const overrides = await loadOverrides(locations);
     const plan = buildSyncPlan(config, locations, repoRoot);
-    await syncRepoToLocal(plan, overrides);
+    options.authWatch.suppress(true);
+    try {
+      await syncRepoToLocal(plan, overrides);
+    } finally {
+      options.authWatch.suppress(false);
+    }
     await options.runSecretsPullIfConfigured(config);
     await updateState(locations, {
       lastPull: new Date().toISOString(),

@@ -237,6 +237,7 @@ export function buildSyncPlan(
           type: 'file',
           isSecret: true,
           isConfigFile: false,
+          isAuthToken: true,
         },
         {
           localPath: mcpAuthJsonPath,
@@ -244,6 +245,7 @@ export function buildSyncPlan(
           type: 'file',
           isSecret: true,
           isConfigFile: false,
+          isAuthToken: true,
         }
       );
     }
