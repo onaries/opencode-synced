@@ -71,11 +71,10 @@ jobs:
     with:
       tag: next
       timeout: 20
-    continue-on-error: true
 
   promote_latest:
     needs: [publish, smoke]
-    if: needs.publish.outputs.requested_tag == 'latest'
+    if: always() && needs.publish.outputs.requested_tag == 'latest' && needs.publish.result == 'success'
     runs-on: ubuntu-latest
     permissions:
       id-token: write
