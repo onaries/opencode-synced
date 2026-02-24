@@ -58,7 +58,7 @@ jobs:
       - name: Resolve published version
         id: version
         run: |
-          VERSION=$(npm view opencode-synced@next version)
+          VERSION=$(npm view @ksw8954/opencode-synced@next version)
           if [ -z "$VERSION" ]; then
             echo "Failed to resolve version from npm tag: next"
             exit 1
@@ -96,5 +96,5 @@ jobs:
             exit 1
           fi
 
-          echo "Promoting opencode-synced@$VERSION to latest"
-          npm dist-tag add "opencode-synced@$VERSION" latest
+          echo "Promoting @ksw8954/opencode-synced@$VERSION to latest"
+          npm dist-tag add "@ksw8954/opencode-synced@$VERSION" latest
