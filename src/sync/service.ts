@@ -151,36 +151,56 @@ export function createSyncService(ctx: SyncServiceContext): SyncService {
     log.info('Pushed auth token update');
   };
 
+  const scheduleAuthPush = (config: ReturnType<typeof normalizeSyncConfig>): void => {
+    if (suppressAuthWatch) return;
+
+    if (authPushDebounce) clearTimeout(authPushDebounce);
+    authPushDebounce = setTimeout(() => {
+      authPushDebounce = null;
+      void withSyncLock(
+        lockPath,
+        {
+          onBusy: () => {
+            log.debug('Auth push skipped, sync already running');
+          },
+        },
+        () => pushAuthNow(config)
+      ).catch((error) => {
+        log.error('Auth push failed', { error: formatError(error) });
+      });
+    }, 2000);
+  };
+
   const startAuthWatcher = (config: ReturnType<typeof normalizeSyncConfig>): void => {
     stopAuthWatch();
     if (!config.includeSecrets) return;
 
     const plan = buildSyncPlan(config, locations, resolveRepoRoot(config, locations));
     const authItems = plan.items.filter((item) => item.isAuthToken);
+    if (authItems.length === 0) return;
 
+    const authFilesByDir = new Map<string, Set<string>>();
     for (const item of authItems) {
-      try {
-        const watcher = watch(item.localPath, () => {
-          if (suppressAuthWatch) return;
+      const dir = path.dirname(item.localPath);
+      const file = path.basename(item.localPath);
+      const files = authFilesByDir.get(dir) ?? new Set<string>();
+      files.add(file);
+      authFilesByDir.set(dir, files);
+    }
 
-          if (authPushDebounce) clearTimeout(authPushDebounce);
-          authPushDebounce = setTimeout(() => {
-            authPushDebounce = null;
-            void withSyncLock(
-              lockPath,
-              {
-                onBusy: () => {
-                  log.debug('Auth push skipped, sync already running');
-                },
-              },
-              () => pushAuthNow(config)
-            ).catch((error) => {
-              log.error('Auth push failed', { error: formatError(error) });
-            });
-          }, 2000);
+    for (const [dir, files] of authFilesByDir) {
+      try {
+        const watcher = watch(dir, (_eventType, filename) => {
+          if (filename) {
+            const changed = filename.toString();
+            if (!files.has(changed)) return;
+          }
+          scheduleAuthPush(config);
         });
         authWatchers.push(watcher);
-      } catch {}
+      } catch (error) {
+        log.warn('Failed to watch auth directory', { dir, error: formatError(error) });
+      }
     }
   };
 
