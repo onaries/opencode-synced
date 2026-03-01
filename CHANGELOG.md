@@ -2,6 +2,57 @@
 
 All notable changes to this project will be documented here by Release Please.
 
+## [0.10.0](https://github.com/onaries/opencode-synced/compare/v0.9.0...v0.10.0) (2026-03-01)
+
+
+### Features
+
+* add /opencode-sync-resolve command to auto-resolve changes ([35e3545](https://github.com/onaries/opencode-synced/commit/35e354507bffa7dc380d90fd771f8a3f8424cebe))
+* add file locking and improved chmod handling to fix false bug ([e3382dc](https://github.com/onaries/opencode-synced/commit/e3382dce421685449e423bbad8b64d6133d80c23))
+* add GitHub user auto-detection and auto-create sync repo ([8998f8c](https://github.com/onaries/opencode-synced/commit/8998f8cbbf62cd90a50dc8dc064eb31de7303235))
+* add model favorites sync setting ([ea67233](https://github.com/onaries/opencode-synced/commit/ea672339a69deda24517c08f0f938efaea1d9080))
+* add prompt stash sync option (includePromptStash) ([2699008](https://github.com/onaries/opencode-synced/commit/2699008967a48af5f8418d89201172e64152265d))
+* add secrets backend config support ([f6a56e2](https://github.com/onaries/opencode-synced/commit/f6a56e28b2f34dd6f6ba08d3cebfc3fc30806048))
+* add secrets sync commands ([c29d63a](https://github.com/onaries/opencode-synced/commit/c29d63a2895eac43c4bb401bfed2597e38fe762d))
+* add sync-link command and improve repo management ([f7bbc7b](https://github.com/onaries/opencode-synced/commit/f7bbc7b655efd507d97662203df8d22d13bc64ff))
+* force release 0.4.0 ([e104eab](https://github.com/onaries/opencode-synced/commit/e104eab65219de06dd0fd2115a66cf1fdcf64cdd))
+* force release for node compatibility refactor ([ec31b45](https://github.com/onaries/opencode-synced/commit/ec31b45c355f8777d2e502bb0a5681bc7c929bcf))
+* implement MCP secret scrubbing and optional sync ([49b8116](https://github.com/onaries/opencode-synced/commit/49b8116f03c2dd4a37e66f68ed30bb812edc75b5))
+* integrate 1Password secrets backend ([ca6a5bb](https://github.com/onaries/opencode-synced/commit/ca6a5bb927402d1b302a8691a6add200ea00f3e1))
+* separate auth token sync from normal push to prevent stale token overwrites ([17fdc05](https://github.com/onaries/opencode-synced/commit/17fdc05020edfc482d1c57bafe2397eee96cf368))
+* support syncing extra config paths ([7cfab68](https://github.com/onaries/opencode-synced/commit/7cfab681c09e8c0b8308aaf6875b057bfab82f23))
+* support trailing commas in config and improve error handling ([00ae89c](https://github.com/onaries/opencode-synced/commit/00ae89c5e291e9dd32777e27aab03712257ad81d))
+* **sync:** 인증 토큰 변경 감지 및 자동 동기화 기능 추가 ([72de7d0](https://github.com/onaries/opencode-synced/commit/72de7d024553ab81ab556fd196dab50c06756389))
+
+
+### Bug Fixes
+
+* address reviewer feedback on startup reliability and toasts ([11d417b](https://github.com/onaries/opencode-synced/commit/11d417b8d8abad3a2c4a2d0e59c436c2f318fce2))
+* address secrets backend review ([f2eb33b](https://github.com/onaries/opencode-synced/commit/f2eb33b9ea605a17230b5d43dae9891a59822d0b))
+* adjust repo org/name detection ([b1c0fef](https://github.com/onaries/opencode-synced/commit/b1c0fef508c3f9ea6e00a42abb033fcbdad18c19))
+* avoid Object.hasOwn and structuredClone ([198857b](https://github.com/onaries/opencode-synced/commit/198857bf1f4c01689c4e6c92d2559ae0a38e30df))
+* **ci:** fix latest tag force push and reusable workflow continue-on-error ([5133412](https://github.com/onaries/opencode-synced/commit/51334123dfe16814b106526cc7d76195c4cadc32))
+* **ci:** publish directly with requested tag, remove promote step ([5b93d12](https://github.com/onaries/opencode-synced/commit/5b93d12243cb5a5c40cb98fde8973e19d385920d))
+* **ci:** use scoped package name @ksw8954/opencode-synced in workflows ([a4814dd](https://github.com/onaries/opencode-synced/commit/a4814ddcb6c2a3b0f92c6c8a51f3485d6bb04b9d))
+* generalize authorization scheme matching in mcp secrets ([3a50890](https://github.com/onaries/opencode-synced/commit/3a50890d86180c5ded4e1b71a81cf00a6097acf4))
+* guard secrets backend validation before actions ([790f850](https://github.com/onaries/opencode-synced/commit/790f85039b9a2c30ac66979ffdee8d426234e798))
+* harden plugin loading and add pack test ([a230567](https://github.com/onaries/opencode-synced/commit/a23056704377bcf07805478c38a37b65555daed8))
+* harden secrets backend integration ([5c37236](https://github.com/onaries/opencode-synced/commit/5c37236ec76c27125adc9e99156e87622bf9ea8b))
+* improve startup sync reliability and repository validation ([2480fb2](https://github.com/onaries/opencode-synced/commit/2480fb2f9b2874014eeef992e0b7f2c51a70476e))
+* move hasOwn to shared utility and use hasOwnProperty.call ([6919922](https://github.com/onaries/opencode-synced/commit/6919922f6785d6f1fae2dc09580ca4dfb4746ba9))
+* preserve original 1password errors ([e67d675](https://github.com/onaries/opencode-synced/commit/e67d6755a0c2024782b4eb2ec6da73f4a2223344))
+* remove uppercase mention ([9e3e022](https://github.com/onaries/opencode-synced/commit/9e3e022ac1dcb29870af6593236d8b001f72fb27))
+* safe chmod extra path entries ([5b37a7c](https://github.com/onaries/opencode-synced/commit/5b37a7c55812acef513870b7f015c5215913dbe5))
+* sync opencode-synced config ([034bbe8](https://github.com/onaries/opencode-synced/commit/034bbe8feb72cf4f2306399788dca5d897d50283))
+* **sync:** watch auth directory for token file updates ([5336f58](https://github.com/onaries/opencode-synced/commit/5336f589cb21b482ebe8bc2ce634d12c9323940a))
+* update repository url to fork for npm provenance ([8ab1181](https://github.com/onaries/opencode-synced/commit/8ab11818040c710d9f631a3318418ee96842f5a0))
+* use .js extensions in missed imports and update convention ([bae3ebb](https://github.com/onaries/opencode-synced/commit/bae3ebb7fbc3696965190d49d29deaa3e3ca6f3f))
+
+
+### Reverts
+
+* event-driven startup sync in favor of setTimeout delay ([221bf8c](https://github.com/onaries/opencode-synced/commit/221bf8c04f4fe322f138b204202e4ea2e098f7ad))
+
 ## [0.9.0](https://github.com/iHildy/opencode-synced/compare/v0.8.0...v0.9.0) (2026-01-29)
 
 
